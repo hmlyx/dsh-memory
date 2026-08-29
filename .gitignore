@@ -1,0 +1,13 @@
+# 运行时数据与本地环境
+.memory-state.json
+对话记忆/
+*.bak
+*.bak-*
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/
+.idea/
