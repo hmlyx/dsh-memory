@@ -6,6 +6,24 @@
  * factory 用 require() 取 react 等 seed 模块，导出 apply/inject。
  * apply 通过 ctx.slots.inject('conversation.view') 注册「记忆」标签，
  * 组件用 fetch 调用 host 半挂载的 /__memory/* HTTP 接口。
+ *
+ * ══════════════════════════════════════════════════════════════
+ * 接口与功能目录（写给其他 AI：改这里前先看本目录，改完同步更新）
+ * ══════════════════════════════════════════════════════════════
+ * ── UI 功能区域（MemoryView 组件，conversation.view 槽位）──
+ * 1. 记忆总开关 / 侧栏AI名(全部) 按钮（调 set-master / set-sidebar-all）
+ * 2. 「记忆」标题 + 记录状态 + 停用记录/返回对话/刷新 按钮
+ * 3. 本 AI 名字：输入框 + 保存（调 set-name，draft 草稿态）
+ * 4. 自动命名开关 / 本会话侧栏AI名开关（set-autoname / set-sidebar-name）
+ * 5. 文件列表 + 内容查看（read 接口，active 高亮）
+ * 6. 文字底色：apply() 注入 style[data-dyn="dsh-memory-text-bg"]——
+ *    所有文字 30% 透明主题色底 + blur(3px)
+ * ── host 接口（见 index.mjs 头部同名目录）──
+ *    GET /__memory/state · GET /__memory/read
+ *    POST /__memory/set-name · set-master · set-enabled · set-autoname · set-sidebar-name · set-sidebar-all
+ *    工具 memory_record(kind=global/shared/brief/event/experience)；systemPrompt 注入 AI 名
+ * ── 数据位置 ──
+ *    记忆目录：按会话工作区 cwd 探测「对话记忆/」子目录（只接受真实存在的目录）
  */
 window.__ModuleLoader__.load({
   id: 'dsh-memory',
@@ -112,11 +130,11 @@ window.__ModuleLoader__.load({
       const base = { fontFamily: 'inherit', boxSizing: 'border-box' }
       const rootStyle = { ...base, display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, padding: '12px 20px', gap: '10px', overflow: 'hidden' }
       const rowStyle = { display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }
-      const btnStyle = { ...base, padding: '4px 10px', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, #444)', background: 'transparent', color: 'inherit', cursor: 'pointer' }
-      const inputStyle = { ...base, padding: '4px 8px', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, #444)', background: 'transparent', color: 'inherit', width: '180px' }
+      const btnStyle = { ...base, padding: '4px 10px', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, #444)', color: 'inherit', cursor: 'pointer' }
+      const inputStyle = { ...base, padding: '4px 8px', borderRadius: '8px', border: '1px solid var(--dsw-alias-border-l2, #444)', color: 'inherit', width: '180px' }
       const bodyStyle = { display: 'flex', flex: 1, minHeight: 0, gap: '10px' }
       const listStyle = { width: '200px', flex: 'none', overflowY: 'auto', borderRight: '1px solid var(--dsw-alias-border-l1, #333)', paddingRight: '10px' }
-      const itemStyle = { display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: '6px', border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer' }
+      const itemStyle = { display: 'block', width: '100%', textAlign: 'left', padding: '6px 8px', borderRadius: '6px', border: 'none', color: 'inherit', cursor: 'pointer' }
       const contentStyle = { flex: 1, minWidth: 0, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'monospace', fontSize: '12px', lineHeight: 1.6 }
       const hintStyle = { color: 'var(--dsw-alias-label-tertiary, #999)', fontSize: '12px' }
 
@@ -174,10 +192,29 @@ window.__ModuleLoader__.load({
 
     function apply(ctx) {
       if (!ctx.slots) return
+      // 记忆功能页：所有文字后面加一层 30% 透明的主题色底色 + 轻微模糊（壁纸上文字更可读）
+      let styleTag = null
+      try {
+        styleTag = document.createElement('style')
+        styleTag.dataset.dyn = 'dsh-memory-text-bg'
+        styleTag.textContent = [
+          '[data-memory-view] * {',
+          '  background-color: color-mix(in srgb, var(--dsw-alias-bg-layer-1, #ffffff) 30%, transparent);',
+          '  backdrop-filter: blur(3px);',
+          '  -webkit-backdrop-filter: blur(3px);',
+          '}',
+        ].join('\n')
+        document.head.appendChild(styleTag)
+      } catch { /* 忽略 */ }
       ctx.slots.inject('conversation.view', () => ctx.slots.register(
         { name: 'conversation.view', id: 'memory', order: 20, label: '记忆' },
         (props) => React.createElement(MemoryView, { sessionId: props.sessionId, openView: props.openView }),
       ))
+      return () => {
+        try {
+          if (styleTag && styleTag.parentNode) styleTag.parentNode.removeChild(styleTag)
+        } catch { /* 忽略 */ }
+      }
     }
 
     exports.apply = apply
