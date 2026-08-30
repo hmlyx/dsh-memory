@@ -82,3 +82,10 @@ const CONFIG = {
 ## License
 
 MIT
+
+---
+
+## 文档 / Docs
+
+- [CHANGELOG](CHANGELOG.md) — 版本历史
+- [SECURITY](SECURITY.md) — 安全说明
