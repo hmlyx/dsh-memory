@@ -10,6 +10,27 @@
  *  - 直接用 node:fs 读写记忆目录（静态插件跑在 host 进程，无沙箱）
  *
  * 生命周期与进程一致：装上即永久生效，重启不消失，无需审批。
+ *
+ * ══════════════════════════════════════════════════════════════
+ * 接口与功能目录（写给其他 AI：改这里前先看本目录，改完同步更新）
+ * ══════════════════════════════════════════════════════════════
+ * ── HTTP 接口（webServer.register，全部 /__memory/*）──
+ *   GET  /__memory/state?session=           返回开关状态/名字/文件列表/记忆目录
+ *   GET  /__memory/read?session=&name=      读取某个记忆文件内容
+ *   POST /__memory/set-name {session,name}  设置本 AI 名字
+ *   POST /__memory/set-master {enabled}     记忆总开关
+ *   POST /__memory/set-enabled {enabled}    记录开关
+ *   POST /__memory/set-autoname {enabled}   自动命名开关
+ *   POST /__memory/set-sidebar-name {enabled} 本会话侧栏 AI 名
+ *   POST /__memory/set-sidebar-all {enabled}  所有会话侧栏 AI 名
+ * ── 注册的对外能力 ──
+ *   工具 memory_record(kind=global/shared/brief/event/experience)，全局可用
+ *   systemPrompt 注入 AI 名字（assembleCtx 取 agent.session）
+ *   事件 agent/session-start → 自动分配名字 + 同步侧栏标题
+ * ── 数据/目录 ──
+ *   记忆目录：按会话工作区 cwd 探测「对话记忆/」子目录，只接受真实存在的目录，
+ *   启动早期探测失败等 agent/session-start 重试（绝不 fallback 相对路径）。
+ *   MEM_DIR 未探测时 readFile 返回 null、writeFile 抛错（防污染）。
  */
 import fs from 'node:fs/promises'
 import path from 'node:path'
