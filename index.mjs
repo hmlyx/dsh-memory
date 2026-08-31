@@ -133,6 +133,66 @@ export function apply(ctx, config = {}) {
     } catch { return [] }
   }
 
+  // 子目录内的文件读写（三3天记忆 / 归档记忆用）
+  async function readSubFile(relDir, name) {
+    if (!MEM_DIR) return null
+    try { return await fs.readFile(path.join(MEM_DIR, relDir, name), 'utf8') } catch { return null }
+  }
+  async function writeSubFile(relDir, name, content) {
+    if (!MEM_DIR) throw new Error('记忆目录尚未探测')
+    await fs.mkdir(path.join(MEM_DIR, relDir), { recursive: true })
+    await fs.writeFile(path.join(MEM_DIR, relDir, name), content, 'utf8')
+  }
+  async function renameIn(relDir, from, to) {
+    if (!MEM_DIR) return
+    try { await fs.rename(path.join(MEM_DIR, relDir, from), path.join(MEM_DIR, to)) } catch { /* 忽略 */ }
+  }
+  async function listSubDir(relDir) {
+    if (!MEM_DIR) return []
+    try {
+      const entries = await fs.readdir(path.join(MEM_DIR, relDir), { withFileTypes: true })
+      return entries.filter((e) => e.isFile()).map((e) => e.name).sort()
+    } catch { return [] }
+  }
+
+  /* ---------------- 三天记忆：按天归档最近 3 天，超 3 天归档保留全文 ---------------- */
+
+  const pad2 = (n) => String(n).padStart(2, '0')
+  const fmtDate = (d) => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+  const todayKey = () => fmtDate(new Date())
+  const DAY_DIR = '三天记忆'
+  const ARCHIVE_DIR = '归档记忆'
+
+  // 审核三天窗口：把超过 3 天的最早「三天记忆/YYYY-MM-DD.md」移到「归档记忆/」（保留全文），
+  // 并确保今日文档存在。返回 true=已归档过、false=无事发生。
+  async function rollThreeDayWindow() {
+    if (!MEM_DIR) return false
+    const today = todayKey()
+    const names = (await listSubDir(DAY_DIR)).filter((n) => /^\d{4}-\d{2}-\d{2}\.md$/.test(n))
+    // 保留最近 3 天（今天 + 昨天 + 前天）；比 cutoff 早的一律归档
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - 2)
+    const cutoffStr = fmtDate(cutoff)
+    let moved = false
+    for (const name of names) {
+      const dateStr = name.replace(/\.md$/, '')
+      if (dateStr < cutoffStr) {
+        try {
+          await fs.mkdir(path.join(MEM_DIR, ARCHIVE_DIR), { recursive: true })
+          await fs.rename(path.join(MEM_DIR, DAY_DIR, name), path.join(MEM_DIR, ARCHIVE_DIR, name))
+          moved = true
+        } catch { /* 单次失败忽略 */ }
+      }
+    }
+    // 确保今日文档存在
+    const todayName = today + '.md'
+    if (!names.includes(todayName)) {
+      const header = '# ' + today + '（今日记忆）\n\n> 当天事件标题索引；具体回忆请查看全部记忆。超 3 天自动归档到「归档记忆/」保留全文。\n\n'
+      await writeSubFile(DAY_DIR, todayName, header)
+    }
+    return moved
+  }
+
   /* ---------------- 命名与隐私 ---------------- */
 
   const sanitizeName = (value) => {
@@ -226,6 +286,8 @@ export function apply(ctx, config = {}) {
     if (state.ais[key].originalTitle === undefined) state.ais[key].originalTitle = null
     await ensureBaseFiles()
     await ensurePrivateFiles(state.ais[key].name)
+    // 三天记忆窗口审核（自动：超 3 天归档保留全文 + 确保今日文档）
+    try { await rollThreeDayWindow() } catch { /* 忽略 */ }
     masterOn = state.masterOn !== false
     sidebarAllOn = state.sidebarAll === true
     nameCache.set(key, state.ais[key])
@@ -405,6 +467,23 @@ export function apply(ctx, config = {}) {
         return ''
       },
     })
+    // 三天记忆规则注入：让 AI 按天归档、知道窗口与归档位置（判断已由插件接管，无需 AI 算）
+    inner.systemPrompt.context({
+      name: 'memory:threeday',
+      order: 106,
+      text: (assembleCtx) => {
+        if (masterOn !== true) return ''
+        const agent = assembleCtx && assembleCtx.agent ? assembleCtx.agent : undefined
+        const session = agent && agent.session ? agent.session : undefined
+        if (!session) return ''
+        const key = String(session.id ?? '')
+        const cached = nameCache.get(key)
+        if (!cached || !cached.name) return ''
+        // 不在这里异步读文件（text 必须是同步）；只注入规则。主动记录时 AI 用 memory_record。
+        return '记忆分「三天窗口」：最近 3 天的记忆在 `三天记忆/`（按天命名 YYYY-MM-DD.md，今天='
+          + todayKey() + '.md），超过 3 天的已自动归档到 `归档记忆/`（保留全文，按天命名，可随时读取回忆）。窗口与归档由记忆插件自动管理，你无需自己判断日期。需要回忆时：先读 `三天记忆/`（在窗口内则在此回忆），若需要更早的细节再到 `归档记忆/` 读对应日期文件。'
+      },
+    })
   })
 
   /* ---------------- HTTP 工具函数 ---------------- */
@@ -474,7 +553,14 @@ export function apply(ctx, config = {}) {
         const { state, entry } = await ensureAiEntryOnce(sessionId)
         const own = sanitizeName(entry.name)
         const files = (await listFiles()).filter((name) => listableFile(name, own)).sort()
-        sendJson(res, 200, { ok: true, version: VERSION, dir, masterOn: state.masterOn !== false, sidebarAll: state.sidebarAll === true, name: entry.name, enabled: entry.enabled === true, autoName: entry.autoName !== false, sidebarName: entry.sidebarName === true, files })
+        // 三天窗口信息：活跃窗口（最近 3 天）与归档目录的文件清单
+        let dayNames = []
+        let archiveNames = []
+        try {
+          dayNames = (await listSubDir(DAY_DIR)).filter((n) => n.endsWith('.md')).sort()
+          archiveNames = (await listSubDir(ARCHIVE_DIR)).filter((n) => n.endsWith('.md')).sort()
+        } catch { /* 忽略 */ }
+        sendJson(res, 200, { ok: true, version: VERSION, dir, masterOn: state.masterOn !== false, sidebarAll: state.sidebarAll === true, name: entry.name, enabled: entry.enabled === true, autoName: entry.autoName !== false, sidebarName: entry.sidebarName === true, files, today: todayKey(), dayNames, archiveNames })
       },
     }),
     ctx.webServer.register({
@@ -488,12 +574,20 @@ export function apply(ctx, config = {}) {
         await ensureDir(sessionId)
         const { entry } = await ensureAiEntryOnce(sessionId)
         const own = sanitizeName(entry.name)
-        if (!readableFile(name, own)) {
-          sendJson(res, 200, { ok: false, error: '无权查看该 AI 的记忆（全局/简要互相隔离，查看需询问）' })
-          return
+        // 三天记忆 / 归档记忆文件：按天文档是共享的（非本 AI 私密），直接读
+        let content = null
+        if (name.indexOf(DAY_DIR + '/') === 0 || name.indexOf(ARCHIVE_DIR + '/') === 0) {
+          const relDir = name.indexOf(DAY_DIR + '/') === 0 ? DAY_DIR : ARCHIVE_DIR
+          const relName = name.slice(relDir.length + 1)
+          content = await readSubFile(relDir, relName)
+        } else {
+          if (!readableFile(name, own)) {
+            sendJson(res, 200, { ok: false, error: '无权查看该 AI 的记忆（全局/简要互相隔离，查看需询问）' })
+            return
+          }
+          content = await readFile(name)
         }
-        const content = (await readFile(name)) ?? ''
-        sendJson(res, 200, { ok: true, name, content })
+        sendJson(res, 200, { ok: true, name, content: content ?? '' })
       },
     }),
     ctx.webServer.register({
