@@ -42,6 +42,7 @@ window.__ModuleLoader__.load({
       const [state, setState] = React.useState({
         masterOn: true, sidebarAll: false, name: '', enabled: true,
         autoName: true, sidebarName: false, files: [], dir: '',
+        today: '', dayNames: [], archiveNames: [],
         loading: true, error: '',
       })
       const [active, setActive] = React.useState(null)
@@ -64,6 +65,9 @@ window.__ModuleLoader__.load({
                 sidebarName: res.sidebarName === true,
                 files: res.files,
                 dir: res.dir || '',
+                today: res.today || '',
+                dayNames: res.dayNames || [],
+                archiveNames: res.archiveNames || [],
                 loading: false,
                 error: '',
               }))
@@ -160,6 +164,33 @@ window.__ModuleLoader__.load({
           React.createElement('input', { key: 'i', style: inputStyle, value: draft || state.name, placeholder: state.name, onChange: (e) => setDraft(e.target.value) }),
           React.createElement('button', { key: 's', style: btnStyle, onClick: saveName, disabled: busy }, '保存'),
         ]),
+        // 三天记忆：最近 3 天窗口 + 归档（按天文档，点击查看）
+        React.createElement('div', { key: 'threeday', style: { ...rowStyle, gap: '4px' } }, [
+          React.createElement('strong', { key: 't' }, '三天记忆'),
+          React.createElement('span', { key: 'h', style: hintStyle }, '最近 3 天，超 3 天自动归档到「归档记忆/」（保留全文）'),
+        ]),
+        React.createElement('div', { key: 'threeday-day', style: rowStyle }, [
+          React.createElement('span', { key: 'l', style: hintStyle }, '窗口：'),
+          ...(state.dayNames.length === 0
+            ? [React.createElement('span', { key: 'e', style: hintStyle }, '（今日为 ' + (state.today || '') + '，还没有按天归档 —— 见下方说明）')]
+            : state.dayNames.map((name) =>
+                React.createElement('button', {
+                  key: name,
+                  style: { ...itemStyle, width: 'auto', background: active && active.name === ('三天记忆/' + name) ? 'var(--dsw-alias-interactive-bg-hover, #333)' : 'transparent', border: '1px solid var(--dsw-alias-border-l2, #444)', borderRadius: '6px' },
+                  onClick: () => openFile('三天记忆/' + name),
+                }, name))),
+        ]),
+        state.archiveNames.length > 0
+          ? React.createElement('div', { key: 'threeday-arch', style: rowStyle }, [
+              React.createElement('span', { key: 'l', style: hintStyle }, '归档：'),
+              ...state.archiveNames.map((name) =>
+                React.createElement('button', {
+                  key: name,
+                  style: { ...itemStyle, width: 'auto', background: active && active.name === ('归档记忆/' + name) ? 'var(--dsw-alias-interactive-bg-hover, #333)' : 'transparent', border: '1px solid var(--dsw-alias-border-l1, #333)', borderRadius: '6px', color: 'var(--dsw-alias-label-tertiary, #999)' },
+                  onClick: () => openFile('归档记忆/' + name),
+                }, name)),
+            ])
+          : null,
         React.createElement('div', { key: 'autoname', style: rowStyle }, [
           React.createElement('button', { key: 'a', style: btnStyle, onClick: toggleAutoName }, state.autoName ? '自动命名：开' : '自动命名：关'),
           React.createElement('span', { key: 'h', style: hintStyle }, '开启后 AI 自动用名字库名字自称，无需手动告知'),
